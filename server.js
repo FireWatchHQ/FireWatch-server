@@ -272,6 +272,18 @@ Only include real fire alarm, sprinkler, fire suppression, or life safety inspec
   }
 });
 
+// ── Debug: test Google search ──
+app.post("/debug/google", async (req, res) => {
+  const { query } = req.body;
+  if (!query) return res.status(400).json({ error: "query required" });
+  try {
+    const results = await googleSearch(`${query} property management contact Washington DC Arlington Alexandria`);
+    res.json({ query, count: results.length, results });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Health check ──
 app.get("/health", (req, res) => res.json({ status: "ok", territories: TERRITORIES, time: new Date().toISOString() }));
 
