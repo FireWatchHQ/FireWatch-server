@@ -5,8 +5,16 @@ import fetch from "node-fetch";
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors({ origin: process.env.ALLOWED_ORIGIN || "*" }));
-app.use(express.json());
+app.use(cors({
+  origin: function(origin, callback) {
+    if (!origin) return callback(null, true);
+    if (origin.includes("netlify.app") || origin.includes("railway.app") || origin === process.env.ALLOWED_ORIGIN) {
+      return callback(null, true);
+    }
+    callback(new Error("Not allowed by CORS"));
+  },
+  credentials: true
+}));app.use(express.json());
 
 // ── Territories ──
 const TERRITORIES = "Washington DC, Arlington VA, Alexandria VA";
