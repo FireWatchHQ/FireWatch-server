@@ -272,12 +272,11 @@ Only include real fire alarm, sprinkler, fire suppression, or life safety inspec
   }
 });
 
-// ── Debug: test Google search ──
-app.post("/debug/google", async (req, res) => {
-  const { query } = req.body;
-  if (!query) return res.status(400).json({ error: "query required" });
+// ── Debug: test Google search (GET for easy browser testing) ──
+app.get("/debug/google", async (req, res) => {
+  const query = req.query.q || "AVA Ballston Arlington VA";
   try {
-    const results = await googleSearch(`${query} property management contact Washington DC Arlington Alexandria`);
+    const results = await googleSearch(`${query} property management contact`);
     res.json({ query, count: results.length, results });
   } catch(e) {
     res.status(500).json({ error: e.message });
