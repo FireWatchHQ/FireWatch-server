@@ -1,3 +1,4 @@
+
 import express from "express";
 import cors from "cors";
 import fetch from "node-fetch";
@@ -7,9 +8,7 @@ const PORT = process.env.PORT || 3000;
 
 app.use(cors({
   origin: function(origin, callback) {
-    // Allow requests with no origin (mobile, Postman, direct)
     if (!origin) return callback(null, true);
-    // Allow any netlify.app domain or your custom domain
     if (origin.includes("netlify.app") || origin.includes("railway.app") || origin === process.env.ALLOWED_ORIGIN) {
       return callback(null, true);
     }
@@ -19,7 +18,6 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// ── Territories ──
 const TERRITORIES = "Washington DC, Arlington VA, Alexandria VA";
 
 // ── Cache ──
@@ -80,10 +78,6 @@ function extractJSON(txt) {
   try { return JSON.parse(txt.slice(s, e + 1).replace(/,(\s*[}\]])/g, "$1")); } catch { return null; }
 }
 
-function snippetsToText(results) {
-  return results.map(r => `SOURCE: ${r.url}\nTITLE: ${r.title}\nSNIPPET: ${r.snippet}`).join("\n\n");
-}
-
 // ══════════════════════════════════════════
 // POST /search/property
 // ══════════════════════════════════════════
@@ -96,27 +90,20 @@ app.post("/search/property", async (req, res) => {
   if (cached) return res.json({ ...cached, fromCache: true });
 
   try {
-    // ── 12 parallel Google searches ──
-    const q2 = query.replace(/"/g, ""); // remove any quotes from query
+    const q2 = query.replace(/"/g, "");
+
     const searches = await Promise.allSettled([
-      // Contact & management
       googleSearch(`${q2} property management company contact Washington DC Arlington Alexandria`),
       googleSearch(`${q2} building engineer facilities director phone email`),
       googleSearch(`${q2} site:linkedin.com facilities OR "chief engineer" OR "property manager"`),
-      // Ownership
       googleSearch(`${q2} property owner LLC Washington DC`),
       googleSearch(`${q2} ownership building real estate`),
-      // Fire & life safety
       googleSearch(`${q2} fire alarm sprinkler inspection vendor contractor`),
       googleSearch(`${q2} fire marshal inspection violation`),
-      // Permits
       googleSearch(`${q2} building permit fire alarm sprinkler Washington DC DCRA`),
       googleSearch(`${q2} building permit fire sprinkler Arlington Alexandria Virginia`),
-      // Property data
-      googleSearch(`${q2} loopnet OR costar property details`),
-      // Tenants & synopsis
+      googleSearch(`${q2} loopnet costar property details`),
       googleSearch(`${q2} tenants floors square feet building`),
-      // General info
       googleSearch(`${q2} Washington DC building address contact`),
     ]);
 
@@ -126,74 +113,74 @@ app.post("/search/property", async (req, res) => {
       .map(r => `SOURCE: ${r.url}\nTITLE: ${r.title}\nSNIPPET: ${r.snippet}`)
       .join("\n\n");
 
-    // ── Scrape permit portals for all 3 territories ──
-    const q = encodeURIComponent(query);
+    const enc = encodeURIComponent(query);
     const [dcPermits, arlingtonPermits, alexandriaPermits] = await Promise.all([
-      scraperFetch(`https://pivs.dcra.dc.gov/PIVS/search.aspx?searchText=${q}`),
-      scraperFetch(`https://permits.arlingtonva.us/CitizenAccess/Cap/CapDetail.aspx?searchText=${q}`),
-      scraperFetch(`https://aca.alexandriava.gov/CitizenAccess/Cap/CapDetail.aspx?searchText=${q}`),
+      scraperFetch(`https://pivs.dcra.dc.gov/PIVS/search.aspx?searchText=${enc}`),
+      scraperFetch(`https://permits.arlingtonva.us/CitizenAccess/Cap/CapDetail.aspx?searchText=${enc}`),
+      scraperFetch(`https://aca.alexandriava.gov/CitizenAccess/Cap/CapDetail.aspx?searchText=${enc}`),
     ]);
 
     const permitData = [
       dcPermits ? `DC PERMITS:\n${dcPermits.slice(0, 1500)}` : "",
       arlingtonPermits ? `ARLINGTON PERMITS:\n${arlingtonPermits.slice(0, 1500)}` : "",
       alexandriaPermits ? `ALEXANDRIA PERMITS:\n${alexandriaPermits.slice(0, 1500)}` : "",
-    ].filter(Boolean).join("\n\n") || "Permit portal data not available — verify manually.";
+    ].filter(Boolean).join("\n\n") || "Permit portal data not available.";
 
-    // ── Claude synthesis ──
     const prompt = `You are an expert commercial real estate and fire & life safety research analyst covering ${TERRITORIES}.
 
-Using ONLY the search results and permit data below, extract everything known about: "${query}"
+Use the Google search results below AND your training knowledge to research: "${query}"
 
-SEARCH RESULTS:
+Prioritize search results for specific contact details. Use your training knowledge to fill in building synopsis, type, address, systems, and sales notes when search results are thin.
+
+GOOGLE SEARCH RESULTS:
 ${allSnippets.slice(0, 10000)}
 
 PERMIT PORTAL DATA:
 ${permitData}
 
-Return ONLY this JSON object, no other text before or after:
+Return ONLY this JSON, no other text before or after:
 {
   "building": "full official building name",
   "address": "full street address including city and zip",
-  "type": "building type (Hospital, Class A Office, Hotel, Retail, Government, etc.)",
+  "type": "building type (Senior Living, Hospital, Class A Office, Hotel, Retail, Government, etc.)",
   "region": "Washington DC or Arlington VA or Alexandria VA",
-  "buildingSynopsis": "3-4 sentence summary covering size, floors, year built, primary use, notable tenants, and any recent news",
+  "buildingSynopsis": "3-4 sentences on size, floors, year built, primary use, notable facts",
   "owner": {
     "name": "owner or LLC name or Unknown",
     "phone": "phone or Unknown",
     "email": "email or Unknown"
   },
-  "ownershipHistory": ["list any previous owners or ownership changes found"],
+  "ownershipHistory": ["previous owners if found"],
   "propertyManagement": {
-    "company": "PM company name or Unknown",
+    "company": "PM company or Unknown",
     "manager": "manager name or Unknown",
     "managerPhone": "phone or Unknown",
     "managerEmail": "email or Unknown",
-    "managerTitle": "exact title or Property Manager"
+    "managerTitle": "title or Property Manager"
   },
   "engineering": {
     "chiefEngineer": "name or Unknown",
     "engineerPhone": "phone or Unknown",
     "engineerEmail": "email or Unknown",
-    "engineerTitle": "exact title or Chief Engineer"
+    "engineerTitle": "title or Chief Engineer"
   },
-  "tenants": ["list major tenants found"],
+  "tenants": ["major tenants or residents"],
   "fireLifeSafety": {
-    "currentProvider": "current fire & life safety vendor or Unknown",
-    "contractStatus": "contract details or Unknown",
-    "contractExpirationEstimate": "estimated expiration based on typical 3-5 year contracts or Unknown",
+    "currentProvider": "vendor or Unknown",
+    "contractStatus": "status or Unknown",
+    "contractExpirationEstimate": "estimate or Unknown",
     "lastInspectionDate": "date or Unknown",
-    "systems": ["list all fire & life safety systems found: fire alarm, sprinkler, suppression, monitoring, kitchen hood, etc."]
+    "systems": ["fire alarm", "sprinkler", "suppression", "monitoring"]
   },
   "permits": {
-    "openPermits": ["list all open fire/alarm/sprinkler permits found with dates"],
-    "recentPermits": ["list recently closed relevant permits with dates"],
-    "violations": ["list any fire marshal violations or failed inspections with dates"]
+    "openPermits": ["open permits with dates"],
+    "recentPermits": ["recently closed permits"],
+    "violations": ["violations or failed inspections"]
   },
-  "gpo": ["Vizient and/or Premier if healthcare GPO member"],
-  "salesNotes": "detailed sales intelligence — best angle, urgency factors, who to call first, contract timing",
+  "gpo": ["Vizient or Premier if applicable"],
+  "salesNotes": "Best sales angle, urgency factors, who to call first, contract timing",
   "confidence": "High or Medium or Low",
-  "sources": ["list up to 8 source URLs used"],
+  "sources": ["up to 8 source URLs"],
   "verifyLinks": [
     "https://pivs.dcra.dc.gov/PIVS/search.aspx",
     "https://fems.dc.gov/service/fire-safety-inspections",
@@ -204,12 +191,12 @@ Return ONLY this JSON object, no other text before or after:
     "https://www.alexandriava.gov/fire/fire-prevention"
   ]
 }
-Use "Unknown" for anything not found. Never fabricate names, phones, or emails.`;
+Only use Unknown for contact details you cannot verify. Never fabricate phone numbers or emails.`;
 
     const raw = await claudeSynthesize(prompt);
     const parsed = extractJSON(raw) || {
       building: query, address: "Verify manually", type: "Commercial",
-      region: "Washington DC", buildingSynopsis: "Could not extract structured data. Use verify links below.",
+      region: "Washington DC", buildingSynopsis: "Could not extract data. Use verify links below.",
       owner: { name: "Unknown", phone: "Unknown", email: "Unknown" },
       ownershipHistory: [],
       propertyManagement: { company: "Unknown", manager: "Unknown", managerPhone: "Unknown", managerEmail: "Unknown", managerTitle: "Property Manager" },
@@ -247,11 +234,11 @@ app.post("/search/rfp", async (req, res) => {
   try {
     const searches = await Promise.allSettled([
       googleSearch(`SAM.gov fire alarm sprinkler suppression inspection solicitation Washington DC Arlington Alexandria 2025 2026`),
-      googleSearch(`site:ocp.dc.gov fire alarm sprinkler suppression inspection RFP solicitation 2025 2026`),
-      googleSearch(`"DC Office of Contracting" fire alarm sprinkler suppression inspection solicitation 2025`),
+      googleSearch(`site:ocp.dc.gov fire alarm sprinkler suppression inspection RFP 2025 2026`),
+      googleSearch(`DC Office of Contracting Procurement fire alarm sprinkler suppression inspection solicitation 2025`),
       googleSearch(`Arlington County procurement fire alarm sprinkler suppression inspection RFP 2025 2026`),
-      googleSearch(`"City of Alexandria" procurement fire alarm sprinkler suppression inspection solicitation 2025 2026`),
-      googleSearch(`site:sam.gov fire protection inspection "Washington DC" OR "Arlington" OR "Alexandria" 2025`),
+      googleSearch(`City of Alexandria procurement fire alarm sprinkler suppression inspection solicitation 2025 2026`),
+      googleSearch(`sam.gov fire protection inspection Washington DC Arlington Alexandria 2025`),
     ]);
 
     const allSnippets = searches
