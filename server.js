@@ -1,4 +1,3 @@
-
 import express from "express";
 import cors from "cors";
 import fetch from "node-fetch";
@@ -82,12 +81,16 @@ function extractJSON(txt) {
 // POST /search/property
 // ══════════════════════════════════════════
 app.post("/search/property", async (req, res) => {
-  const { query } = req.body;
+  const { query, forceRefresh } = req.body;
   if (!query) return res.status(400).json({ error: "query required" });
 
   const cacheKey = "prop:" + query.toLowerCase().trim();
-  const cached = getCache(cacheKey);
-  if (cached) return res.json({ ...cached, fromCache: true });
+  if (!forceRefresh) {
+    const cached = getCache(cacheKey);
+    if (cached) return res.json({ ...cached, fromCache: true });
+  } else {
+    cache.delete(cacheKey);
+  }
 
   try {
     const q2 = query.replace(/"/g, "");
