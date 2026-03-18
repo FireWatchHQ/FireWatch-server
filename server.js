@@ -1,4 +1,3 @@
-
 import express from "express";
 import cors from "cors";
 import fetch from "node-fetch";
@@ -331,7 +330,63 @@ Only include RFPs with confirmed future due dates. Empty array is better than st
   }
 });
 
-// ── Debug ──
+// ── Gemini with Google Search grounding ──
+async function geminiChat(messages, systemContext) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error("Gemini API key not configured");
+
+  const contents = messages.map(m => ({
+    role: m.role === "user" ? "user" : "model",
+    parts: [{ text: m.text }]
+  }));
+
+  const body = {
+    system_instruction: { parts: [{ text: systemContext }] },
+    contents,
+    tools: [{ google_search: {} }],
+    generationConfig: { maxOutputTokens: 1500, temperature: 0.7 }
+  };
+
+  const r = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+    { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body) }
+  );
+  const d = await r.json();
+  if (d.error) throw new Error("Gemini: " + d.error.message);
+  return d.candidates?.[0]?.content?.parts?.map(p=>p.text||"").join("") || "No response from Gemini.";
+}
+
+// ══════════════════════════════════════════
+// POST /chat/gemini
+// ══════════════════════════════════════════
+app.post("/chat/gemini", async (req, res) => {
+  const { messages, buildingContext } = req.body;
+  if (!messages || !messages.length) return res.status(400).json({ error:"messages required" });
+
+  try {
+    const systemContext = `You are a fire & life safety sales intelligence assistant with access to Google Search.
+You are helping research a commercial property in Washington DC, Arlington VA, or Alexandria VA.
+
+KNOWN PROPERTY DATA:
+${buildingContext || "No prior data available — search to find information."}
+
+Your job:
+1. Answer questions about this property using Google Search
+2. Find missing contact details — property manager, chief engineer, facilities director names, emails, phone numbers
+3. Search for permits, violations, fire marshal records
+4. Write outreach emails or sales scripts when asked
+5. Remember the full conversation context for follow-up questions
+
+Always search Google for specific contact details. Be direct and specific. Format contact info clearly.
+Territory: Washington DC, Arlington VA, Alexandria VA.`;
+
+    const reply = await geminiChat(messages, systemContext);
+    res.json({ reply });
+  } catch(e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
 app.get("/debug/search", async (req, res) => {
   const query = req.query.q || "Sibley Memorial Hospital Washington DC";
   try {
