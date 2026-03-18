@@ -30,13 +30,14 @@ function getCache(key) {
 }
 function setCache(key, data) { cache.set(key, { ts: Date.now(), data }); }
 
-// ── Google Search ──
-async function googleSearch(query, num = 10) {
-  const url = `https://www.googleapis.com/customsearch/v1?key=${process.env.GOOGLE_API_KEY}&cx=${process.env.GOOGLE_CX}&q=${encodeURIComponent(query)}&num=${num}`;
+// ── SerpApi Google Search ──
+async function serpSearch(query, num = 10) {
+  const url = `https://serpapi.com/search.json?engine=google&q=${encodeURIComponent(query)}&num=${num}&api_key=${process.env.SERPAPI_KEY}&gl=us&hl=en`;
   const r = await fetch(url);
   const d = await r.json();
-  if (d.error) throw new Error("Google: " + d.error.message);
-  return (d.items || []).map(i => ({ title: i.title, url: i.link, snippet: i.snippet }));
+  if (d.error) throw new Error("SerpApi: " + d.error);
+  const results = d.organic_results || [];
+  return results.map(i => ({ title: i.title, url: i.link, snippet: i.snippet || "" }));
 }
 
 // ── ScraperAPI ──
@@ -93,21 +94,22 @@ app.post("/search/property", async (req, res) => {
   }
 
   try {
-    const q2 = query.replace(/"/g, "");
+    const q = query.replace(/"/g, "");
 
+    // ── 12 parallel Google searches via SerpApi ──
     const searches = await Promise.allSettled([
-      googleSearch(`${q2} property management company contact Washington DC Arlington Alexandria`),
-      googleSearch(`${q2} building engineer facilities director phone email`),
-      googleSearch(`${q2} site:linkedin.com facilities OR "chief engineer" OR "property manager"`),
-      googleSearch(`${q2} property owner LLC Washington DC`),
-      googleSearch(`${q2} ownership building real estate`),
-      googleSearch(`${q2} fire alarm sprinkler inspection vendor contractor`),
-      googleSearch(`${q2} fire marshal inspection violation`),
-      googleSearch(`${q2} building permit fire alarm sprinkler Washington DC DCRA`),
-      googleSearch(`${q2} building permit fire sprinkler Arlington Alexandria Virginia`),
-      googleSearch(`${q2} loopnet costar property details`),
-      googleSearch(`${q2} tenants floors square feet building`),
-      googleSearch(`${q2} Washington DC building address contact`),
+      serpSearch(`${q} property management company contact Washington DC Arlington Alexandria`),
+      serpSearch(`${q} building engineer facilities director phone email`),
+      serpSearch(`${q} property manager chief engineer linkedin`),
+      serpSearch(`${q} property owner LLC Washington DC`),
+      serpSearch(`${q} building owner real estate`),
+      serpSearch(`${q} fire alarm sprinkler inspection vendor contractor`),
+      serpSearch(`${q} fire marshal inspection violation`),
+      serpSearch(`${q} building permit fire alarm sprinkler Washington DC DCRA`),
+      serpSearch(`${q} building permit fire sprinkler Arlington Alexandria Virginia`),
+      serpSearch(`${q} loopnet costar property details`),
+      serpSearch(`${q} tenants floors square feet building`),
+      serpSearch(`${q} Washington DC Arlington Alexandria building address contact`),
     ]);
 
     const allSnippets = searches
@@ -116,6 +118,7 @@ app.post("/search/property", async (req, res) => {
       .map(r => `SOURCE: ${r.url}\nTITLE: ${r.title}\nSNIPPET: ${r.snippet}`)
       .join("\n\n");
 
+    // ── Scrape permit portals ──
     const enc = encodeURIComponent(query);
     const [dcPermits, arlingtonPermits, alexandriaPermits] = await Promise.all([
       scraperFetch(`https://pivs.dcra.dc.gov/PIVS/search.aspx?searchText=${enc}`),
@@ -129,6 +132,7 @@ app.post("/search/property", async (req, res) => {
       alexandriaPermits ? `ALEXANDRIA PERMITS:\n${alexandriaPermits.slice(0, 1500)}` : "",
     ].filter(Boolean).join("\n\n") || "Permit portal data not available.";
 
+    // ── Claude synthesis ──
     const prompt = `You are an expert commercial real estate and fire & life safety research analyst covering ${TERRITORIES}.
 
 Use the Google search results below AND your training knowledge to research: "${query}"
@@ -183,7 +187,7 @@ Return ONLY this JSON, no other text before or after:
   "gpo": ["Vizient or Premier if applicable"],
   "salesNotes": "Best sales angle, urgency factors, who to call first, contract timing",
   "confidence": "High or Medium or Low",
-  "sources": ["up to 8 source URLs"],
+  "sources": ["up to 8 source URLs from search results"],
   "verifyLinks": [
     "https://pivs.dcra.dc.gov/PIVS/search.aspx",
     "https://fems.dc.gov/service/fire-safety-inspections",
@@ -236,12 +240,11 @@ app.post("/search/rfp", async (req, res) => {
 
   try {
     const searches = await Promise.allSettled([
-      googleSearch(`SAM.gov fire alarm sprinkler suppression inspection solicitation Washington DC Arlington Alexandria 2025 2026`),
-      googleSearch(`site:ocp.dc.gov fire alarm sprinkler suppression inspection RFP 2025 2026`),
-      googleSearch(`DC Office of Contracting Procurement fire alarm sprinkler suppression inspection solicitation 2025`),
-      googleSearch(`Arlington County procurement fire alarm sprinkler suppression inspection RFP 2025 2026`),
-      googleSearch(`City of Alexandria procurement fire alarm sprinkler suppression inspection solicitation 2025 2026`),
-      googleSearch(`sam.gov fire protection inspection Washington DC Arlington Alexandria 2025`),
+      serpSearch(`SAM.gov fire alarm sprinkler suppression inspection solicitation Washington DC Arlington Alexandria 2025 2026`),
+      serpSearch(`DC Office of Contracting Procurement fire alarm sprinkler suppression inspection RFP 2025 2026`),
+      serpSearch(`Arlington County procurement fire alarm sprinkler suppression inspection RFP 2025 2026`),
+      serpSearch(`City of Alexandria procurement fire alarm sprinkler suppression inspection solicitation 2025 2026`),
+      serpSearch(`site:sam.gov fire protection inspection Washington DC Arlington Alexandria 2025 2026`),
     ]);
 
     const allSnippets = searches
@@ -272,11 +275,11 @@ Only include real fire alarm, sprinkler, fire suppression, or life safety inspec
   }
 });
 
-// ── Debug: test Google search (GET for easy browser testing) ──
-app.get("/debug/google", async (req, res) => {
-  const query = req.query.q || "AVA Ballston Arlington VA";
+// ── Debug: test SerpApi ──
+app.get("/debug/search", async (req, res) => {
+  const query = req.query.q || "Sibley Memorial Hospital Washington DC";
   try {
-    const results = await googleSearch(`${query} property management contact`);
+    const results = await serpSearch(`${query} property management contact`);
     res.json({ query, count: results.length, results });
   } catch(e) {
     res.status(500).json({ error: e.message });
