@@ -7,14 +7,17 @@ const PORT = process.env.PORT || 3000;
 
 app.use(cors({
   origin: function(origin, callback) {
+    // Allow requests with no origin (mobile, Postman, direct)
     if (!origin) return callback(null, true);
+    // Allow any netlify.app domain or your custom domain
     if (origin.includes("netlify.app") || origin.includes("railway.app") || origin === process.env.ALLOWED_ORIGIN) {
       return callback(null, true);
     }
     callback(new Error("Not allowed by CORS"));
   },
   credentials: true
-}));app.use(express.json());
+}));
+app.use(express.json());
 
 // ── Territories ──
 const TERRITORIES = "Washington DC, Arlington VA, Alexandria VA";
@@ -94,25 +97,27 @@ app.post("/search/property", async (req, res) => {
 
   try {
     // ── 12 parallel Google searches ──
+    const q2 = query.replace(/"/g, ""); // remove any quotes from query
     const searches = await Promise.allSettled([
       // Contact & management
-      googleSearch(`"${query}" property management company contact ${TERRITORIES}`),
-      googleSearch(`"${query}" building engineer facilities director phone email ${TERRITORIES}`),
-      googleSearch(`"${query}" site:linkedin.com facilities OR "chief engineer" OR "property manager"`),
+      googleSearch(`${q2} property management company contact Washington DC Arlington Alexandria`),
+      googleSearch(`${q2} building engineer facilities director phone email`),
+      googleSearch(`${q2} site:linkedin.com facilities OR "chief engineer" OR "property manager"`),
       // Ownership
-      googleSearch(`"${query}" property owner LLC deed ${TERRITORIES}`),
-      googleSearch(`"${query}" ownership history building ${TERRITORIES}`),
+      googleSearch(`${q2} property owner LLC Washington DC`),
+      googleSearch(`${q2} ownership building real estate`),
       // Fire & life safety
-      googleSearch(`"${query}" fire alarm sprinkler suppression inspection vendor contractor ${TERRITORIES}`),
-      googleSearch(`"${query}" fire marshal inspection violation failed ${TERRITORIES}`),
-      // Permits — all three jurisdictions
-      googleSearch(`"${query}" building permit fire alarm sprinkler suppression Washington DC DCRA`),
-      googleSearch(`"${query}" building permit fire sprinkler Arlington VA`),
-      googleSearch(`"${query}" building permit fire sprinkler Alexandria VA`),
+      googleSearch(`${q2} fire alarm sprinkler inspection vendor contractor`),
+      googleSearch(`${q2} fire marshal inspection violation`),
+      // Permits
+      googleSearch(`${q2} building permit fire alarm sprinkler Washington DC DCRA`),
+      googleSearch(`${q2} building permit fire sprinkler Arlington Alexandria Virginia`),
       // Property data
-      googleSearch(`"${query}" site:loopnet.com OR site:costar.com`),
+      googleSearch(`${q2} loopnet OR costar property details`),
       // Tenants & synopsis
-      googleSearch(`"${query}" tenants floors square feet building ${TERRITORIES}`),
+      googleSearch(`${q2} tenants floors square feet building`),
+      // General info
+      googleSearch(`${q2} Washington DC building address contact`),
     ]);
 
     const allSnippets = searches
